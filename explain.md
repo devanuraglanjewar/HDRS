@@ -12,6 +12,66 @@ This document explains the current codebase end-to-end:
 
 This is written against the current implementation in the repository, not an idealized design.
 
+## 1.1 Validated implementation workflow
+
+The following diagram reflects the current code path. Phase 2 detection signals and
+Phase 3 mitigation are shown as planned extension points from the development guide;
+they are not implemented in the current application.
+
+```mermaid
+flowchart TD
+    A[User opens React frontend] --> B[FastAPI app: src/main.py]
+    B --> C{Choose operation}
+
+    C -->|Upload PDF/TXT/MD/JSON| D[POST /api/ingest/file]
+    C -->|Paste text| E[POST /api/ingest/text]
+    D --> F[Extract text with pypdf or file I/O]
+    E --> G[Background ingestion task]
+    F --> G
+    G --> H[RecursiveCharacterTextSplitter<br/>1500 characters, 300 overlap]
+    H --> I[Embed each chunk with<br/>sentence-transformers all-MiniLM-L6-v2]
+    I --> J{Vector store available?}
+    J -->|Chroma configured and reachable| K[Chroma Cloud or local Chroma]
+    J -->|Chroma unavailable| L[NumPy JSON fallback]
+    K --> M[Store text, source, chunk_index, embedding]
+    L --> M
+
+    C -->|Ask question| N[POST /api/ask]
+    N --> O[Embed query]
+    O --> P[Retrieve top-k chunks<br/>default k=3, optional source filter]
+    P --> Q[Build context-only prompt]
+    Q --> R[Generate with Gemini first]
+    R -->|Gemini failure/rate limit<br/>and Ollama available| S[Fallback to Ollama llama3.1:8b]
+    R --> T[Return answer]
+    S --> T
+    T --> U[Return answer, model_used,<br/>retrieved chunks and scores]
+
+    C -->|Run benchmark| V[POST /api/benchmark/run]
+    V --> W[Download HaluEval subset<br/>or generate source-scoped samples]
+    W --> X[Temporary isolated benchmark index]
+    X --> Y[Retrieve and generate each answer]
+    Y --> Z[Sentence-level LLM judge:<br/>Gemini, Ollama fallback, or heuristic]
+    Z --> AA[Write benchmark_results.json<br/>and labeled_dataset.json]
+
+    AA --> AB[Phase 1 measured baseline]
+    T --> AC[Phase 1 live RAG output]
+    AC -. planned Phase 2 .-> AD[Entropy + consistency + grounding]
+    AD -. planned Phase 2 .-> AE[Fused sentence risk score]
+    AE -. planned Phase 3 .-> AF[Targeted re-retrieval]
+    AF -. planned Phase 3 .-> AG[Regenerate supported claim<br/>or abstain]
+    AG -. planned Phase 3 .-> AH[Final mitigated answer]
+```
+
+### Phase alignment
+
+| Guide phase | Current repository status |
+|---|---|
+| Phase 1: working RAG and measured baseline | Core pipeline and benchmark workflow are implemented. Formal completion still depends on the required evaluation scope and presentation artifacts. |
+| Phase 2: entropy, consistency, grounding, and fused risk score | Planned only; no live multi-signal detector is wired into the query path. |
+| Phase 3: targeted correction or abstention | Planned only; no sentence-level mitigation loop is wired into the query path. |
+
+The diagram deliberately does not present Phase 2 or Phase 3 as completed features.
+
 ---
 
 ## 1. High-Level Purpose
@@ -105,7 +165,7 @@ After the recent connection fix, the runtime prefers:
 
 ### Current cloud connection behavior
 
-The code in [`src/rag_core.py`](D:\HDRS\src\rag_core.py) now does this:
+The code in [`src/core/vector_store.py`](D:\HDRS\src\core\vector_store.py) does this:
 
 - reads:
   - `CHROMA_HOST`
@@ -134,8 +194,6 @@ Each chunk stores:
 - metadata:
   - `source`
   - `chunk_index`
-  - `start_sentence`
-  - `end_sentence`
 - an embedding vector
 - a UUID
 
@@ -182,26 +240,27 @@ Both call:
 
 ### 5.2 Chunking
 
-Chunking is handled by `SemanticChunker` in [`src/rag_core.py`](D:\HDRS\src/rag_core.py).
+Chunking is handled by `SemanticChunker` in [`src/core/chunker.py`](D:\HDRS\src\core\chunker.py).
 
 It:
 
-- splits text into sentences
-- groups sentences into chunks
-- tries to keep chunks around a target token size
-- keeps overlap between chunks
+- uses LangChain `RecursiveCharacterTextSplitter`
+- prefers paragraph, newline, sentence, word, and character boundaries
+- uses a 1500-character chunk size and 300-character overlap
+- stores source and sequential chunk-index metadata
 
-Each chunk gets metadata about source and sentence range.
+Each chunk gets metadata for its source and sequential chunk index.
 
 ### 5.3 Embedding
 
-The app uses Google Generative AI embeddings:
+The app uses local sentence-transformer embeddings:
 
-- model: `models/gemini-embedding-001`
+- model: `all-MiniLM-L6-v2`
 
-Embedding happens in `RAGPipeline.get_embedding(...)`.
+Embedding happens through `embed_text(...)` in [`src/core/llm.py`](D:\HDRS\src\core\llm.py).
 
-If embedding fails, the code returns a zero-vector fallback.
+If the embedding model is unavailable or fails, the code returns a zero-vector
+fallback; retrieval then uses lexical token-overlap fallback logic.
 
 ### 5.4 Retrieval
 
@@ -225,10 +284,11 @@ Rules enforced by the prompt:
   - `I do not know based on the provided sources.`
 - do not mention chunk IDs or dataset labels
 
-Model routing:
+Model routing in the current implementation:
 
-- if Ollama is available and `model_name == "auto"`, it prefers Ollama
-- otherwise it falls back to Gemini
+- `model_name == "auto"` starts with Gemini generation
+- if Gemini fails due to rate limiting/quota and Ollama is available, generation falls back to Ollama
+- the benchmark judge follows the same Gemini-first pattern, then tries Ollama and finally a heuristic evaluator
 
 ### 5.6 Answer output
 
@@ -520,13 +580,10 @@ If they don’t match, it warns the user instead of showing misleading results.
 
 ### Current runtime status
 
-At the time this explanation was written:
-
-- the app is connected to **Chroma Cloud**
-- the status endpoint reports:
-  - `vector_store_type: ChromaDB`
-  - `vector_store_connection: chroma_cloud`
-- indexed chunks were empty after a local reset, so the library can appear empty until you ingest again
+The runtime target is selected from `.env`: Chroma Cloud is attempted when its
+credentials are configured, with local Chroma and then NumPy fallback behavior.
+The active indexed-chunk count is runtime state and may be zero after a reset,
+so the library can appear empty until a document is ingested again.
 
 ### Why `/api/documents` may return `[]`
 
@@ -590,7 +647,7 @@ Notes / recent fix
 ## 14. Operational Notes
 
 - The backend uses environment variables loaded from `.env`
-- `GOOGLE_API_KEY` is required for Gemini embeddings and fallback generation
+- `GOOGLE_API_KEY` is required for Gemini fallback generation and benchmark judging
 - `OLLAMA_MODEL` and `OLLAMA_BASE_URL` control local generation
 - `CHROMA_HOST`, `CHROMA_API_KEY`, `CHROMA_TENANT`, and `CHROMA_DATABASE` control Chroma Cloud
 - The frontend Vite dev server proxies `/api` to `http://localhost:8000`
