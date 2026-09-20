@@ -53,37 +53,29 @@ def get_retry_delay(error: Exception) -> float:
     return 60.0
 
 
+_embedding_model = None
+
+def _get_embedding_model():
+    global _embedding_model
+    if _embedding_model is None:
+        try:
+            from sentence_transformers import SentenceTransformer
+            _embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+        except ImportError:
+            pass
+    return _embedding_model
+
 @lru_cache(maxsize=2048)
 def _embed_text_cached(text: str) -> tuple:
-    if not genai:
-        return tuple([0.0] * 3072)
-
-    max_retries = 5
-    for attempt in range(max_retries):
-        try:
-            response = _run_with_timeout(
-                genai.embed_content,
-                EMBED_CALL_TIMEOUT,
-                model="models/gemini-embedding-001",
-                content=text,
-                task_type="retrieval_document" if len(text) > 100 else "retrieval_query",
-            )
-            return tuple(response["embedding"])
-        except TimeoutError as te:
-            # Treat timeout similarly to other errors but allow retries
-            err_msg = str(te).lower()
-            if attempt < max_retries - 1:
-                time.sleep(1.0 + attempt)
-                continue
-            return tuple([0.0] * 3072)
-        except Exception as error:
-            err_msg = str(error).lower()
-            is_rate_limit = any(x in err_msg for x in ["429", "quota", "resourceexhausted", "rate limit"])
-            if is_rate_limit and attempt < max_retries - 1:
-                time.sleep(get_retry_delay(error))
-            else:
-                return tuple([0.0] * 3072)
-
+    model = _get_embedding_model()
+    if not model:
+        return tuple([0.0] * 384)
+    
+    try:
+        embedding = model.encode(text)
+        return tuple(embedding.tolist())
+    except Exception as error:
+        return tuple([0.0] * 384)
 
 def embed_text(text: str) -> list:
     return list(_embed_text_cached((text or "").strip()))

@@ -261,18 +261,10 @@ def evaluate_sentence_level(context: str, answer: str, rate_limiter=None):
             "heuristic",
         )
 
-    # Try Ollama first when available; log reason if it fails so we can diagnose
-    if OLLAMA_AVAILABLE:
-        try:
-            return _parse_json_response(judge_with_ollama(prompt, OLLAMA_MODEL)), "ollama"
-        except Exception as e:
-            logger.warning("Judge: Ollama attempt failed, falling back to Gemini: %s", e, exc_info=True)
-
-    # Gemini with retries. Allow a small number of retries for transient errors (including non-rate-limit errors)
+    # Try Gemini with retries, falling back to Ollama if rate-limited.
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            # If a rate limiter is provided, wait before making external Gemini calls.
             if rate_limiter:
                 rate_limiter.wait()
             return _parse_json_response(judge_with_gemini(prompt, "gemini-3.6-flash")), "gemini"
@@ -280,8 +272,15 @@ def evaluate_sentence_level(context: str, answer: str, rate_limiter=None):
             err_msg = str(error).lower()
             is_rate_limit = any(x in err_msg for x in ["429", "quota", "resourceexhausted", "rate limit"]) 
             logger.warning("Judge: Gemini attempt %d/%d failed: %s", attempt + 1, max_retries, error, exc_info=True)
+            
+            if is_rate_limit and OLLAMA_AVAILABLE:
+                logger.info("Judge: Gemini rate limited, falling back to Ollama")
+                try:
+                    return _parse_json_response(judge_with_ollama(prompt, OLLAMA_MODEL)), "ollama"
+                except Exception as ollama_e:
+                    logger.warning("Judge: Ollama fallback failed: %s", ollama_e)
+            
             if attempt < max_retries - 1:
-                # Backoff slightly: exponential for rate limits, short linear backoff for other errors
                 backoff = JUDGE_RATE_LIMIT_BACKOFF_SECONDS * (2 ** attempt) if is_rate_limit else (1.5 * (attempt + 1))
                 time.sleep(backoff)
                 continue
@@ -310,7 +309,7 @@ def run_benchmark(num_samples: int = 50, model_name: str = "auto", source_filter
             update_status("running", 10.0, 0, total_samples, message=f"Generating source benchmark for {source_filter}.")
             temp_workdir = tempfile.mkdtemp(prefix="hdrs_benchmark_")
             temp_chroma_dir = os.path.join(temp_workdir, "chroma_db")
-            pipeline = RAGPipeline(persist_dir=temp_chroma_dir, collection_name="benchmark_documents")
+            pipeline = RAGPipeline(persist_dir=temp_chroma_dir, collection_name="benchmark_documents", force_local=True)
             pipeline.ingest_text(source_text, source_filter)
             update_status("running", 25.0, 0, total_samples, message=f"Indexing source '{source_filter}'.")
         else:
@@ -319,7 +318,7 @@ def run_benchmark(num_samples: int = 50, model_name: str = "auto", source_filter
             update_status("running", 10.0, 0, total_samples, message="Downloading benchmark samples.")
             temp_workdir = tempfile.mkdtemp(prefix="hdrs_benchmark_")
             temp_chroma_dir = os.path.join(temp_workdir, "chroma_db")
-            pipeline = RAGPipeline(persist_dir=temp_chroma_dir, collection_name="benchmark_documents")
+            pipeline = RAGPipeline(persist_dir=temp_chroma_dir, collection_name="benchmark_documents", force_local=True)
             unique_knowledges = list(dict.fromkeys(s["knowledge"] for s in samples))
             for idx, k_text in enumerate(unique_knowledges):
                 pipeline.ingest_text(k_text, f"HaluEval_Doc_{idx}")
@@ -447,7 +446,7 @@ def run_benchmark(num_samples: int = 50, model_name: str = "auto", source_filter
                     if has_hallucination:
                         hallucinated_answers += 1
 
-                return entry, latency
+                return entry, total_latency
 
             except Exception as e:
                 logger.exception("Error processing sample %d: %s", idx, e)

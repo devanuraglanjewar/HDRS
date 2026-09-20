@@ -18,9 +18,9 @@ logger = logging.getLogger(__name__)
 
 
 class RAGPipeline:
-    def __init__(self, persist_dir="data/chroma_db", collection_name="rag_documents"):
+    def __init__(self, persist_dir="data/chroma_db", collection_name="rag_documents", force_local=False):
         self.chunker = SemanticChunker()
-        self.vector_store = VectorStoreManager(persist_dir=persist_dir, collection_name=collection_name)
+        self.vector_store = VectorStoreManager(persist_dir=persist_dir, collection_name=collection_name, force_local=force_local)
 
     def get_embedding(self, text: str) -> list:
         return embed_text(text)
@@ -158,14 +158,6 @@ Query: {query}
 
 Answer:"""
 
-        use_ollama = ((model_name == "auto" and OLLAMA_AVAILABLE) or model_name.startswith("ollama:"))
-        if use_ollama:
-            ollama_model = OLLAMA_MODEL if model_name in ("auto", "ollama") else model_name.replace("ollama:", "")
-            try:
-                return self._sanitize_generated_answer(generate_with_ollama(full_prompt, system_instruction, ollama_model))
-            except Exception:
-                pass
-
         gemini_model = "gemini-3.6-flash" if model_name == "auto" else model_name
         max_retries = 5
         for attempt in range(max_retries):
@@ -174,6 +166,15 @@ Answer:"""
             except Exception as error:
                 err_msg = str(error).lower()
                 is_rate_limit = any(x in err_msg for x in ["429", "quota", "resourceexhausted", "rate limit"])
+                
+                if is_rate_limit and OLLAMA_AVAILABLE:
+                    logger.info("Generate: Gemini rate limited, falling back to Ollama")
+                    ollama_model = OLLAMA_MODEL if model_name in ("auto", "ollama") else model_name.replace("ollama:", "")
+                    try:
+                        return self._sanitize_generated_answer(generate_with_ollama(full_prompt, system_instruction, ollama_model))
+                    except Exception as ollama_e:
+                        logger.warning("Generate: Ollama fallback failed: %s", ollama_e)
+                
                 if is_rate_limit and attempt < max_retries - 1:
                     time.sleep(2.0 + attempt)
                 else:

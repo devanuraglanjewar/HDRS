@@ -14,11 +14,11 @@ except ImportError:
 
 
 class ChromaVectorStore:
-    def __init__(self, persist_dir="data/chroma_db", collection_name="rag_documents"):
+    def __init__(self, persist_dir="data/chroma_db", collection_name="rag_documents_st", force_local=False):
         self.connection_mode = "local_persistent"
         self.client = None
 
-        if CHROMA_API_KEY and chromadb:
+        if not force_local and CHROMA_API_KEY and chromadb:
             try:
                 if CHROMA_HOST:
                     self.client = chromadb.CloudClient(
@@ -53,8 +53,11 @@ class ChromaVectorStore:
     def get_persist_dir(self):
         return getattr(self.client, "path", None)
 
-    def query(self, query_embedding, top_k=3):
-        results = self.collection.query(query_embeddings=[query_embedding], n_results=top_k)
+    def query(self, query_embedding, top_k=3, source_filter=None):
+        if source_filter:
+            results = self.collection.query(query_embeddings=[query_embedding], n_results=top_k, where={"source": source_filter})
+        else:
+            results = self.collection.query(query_embeddings=[query_embedding], n_results=top_k)
         formatted = []
         if results and results.get("documents") and results["documents"][0]:
             for idx in range(len(results["documents"][0])):
@@ -174,7 +177,7 @@ class NumpyVectorStore:
 
 
 class VectorStoreManager:
-    def __init__(self, persist_dir="data/chroma_db", collection_name="rag_documents"):
+    def __init__(self, persist_dir="data/chroma_db", collection_name="rag_documents_st", force_local=False):
         self.persist_dir = persist_dir
         self.collection_name = collection_name
         self.use_fallback = False
@@ -185,7 +188,7 @@ class VectorStoreManager:
             self.use_fallback = True
         else:
             try:
-                self.cloud_store = ChromaVectorStore(persist_dir, collection_name)
+                self.cloud_store = ChromaVectorStore(persist_dir, collection_name, force_local=force_local)
                 self.store = self.cloud_store
             except Exception:
                 self.use_fallback = True

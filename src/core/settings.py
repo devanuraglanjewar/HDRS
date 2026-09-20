@@ -24,7 +24,7 @@ GEMINI_RPM = int(os.getenv("GEMINI_RPM", "15"))
 
 # Timeouts for external calls (in seconds). Tunable via env to avoid hung LLM calls.
 EMBED_CALL_TIMEOUT = int(os.getenv("EMBED_CALL_TIMEOUT", "10"))
-LLM_CALL_TIMEOUT = int(os.getenv("LLM_CALL_TIMEOUT", "60"))
-JUDGE_CALL_TIMEOUT = int(os.getenv("JUDGE_CALL_TIMEOUT", "60"))
+LLM_CALL_TIMEOUT = int(os.getenv("LLM_CALL_TIMEOUT", "180"))
+JUDGE_CALL_TIMEOUT = int(os.getenv("JUDGE_CALL_TIMEOUT", "180"))
 # Per-sample hard timeout: maximum wall-clock seconds allowed per sample before it's cancelled and recorded as failed.
 PER_SAMPLE_TIMEOUT = int(os.getenv("PER_SAMPLE_TIMEOUT", "300"))
