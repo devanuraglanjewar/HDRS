@@ -55,11 +55,21 @@ flowchart TD
 
     AA --> AB[Phase 1 measured baseline]
     T --> AC[Phase 1 live RAG output]
-    AC -. planned Phase 2 .-> AD[Entropy + consistency + grounding]
-    AD -. planned Phase 2 .-> AE[Fused sentence risk score]
-    AE -. planned Phase 3 .-> AF[Targeted re-retrieval]
-    AF -. planned Phase 3 .-> AG[Regenerate supported claim<br/>or abstain]
-    AG -. planned Phase 3 .-> AH[Final mitigated answer]
+    AC -. planned Phase 2 .-> AD[Split answer into sentences]
+    AD -. planned Phase 2 .-> AE[Entropy/confidence score]
+    AD -. planned Phase 2 .-> AF[Sampling consistency score]
+    AD -. planned Phase 2 .-> AG[Retrieval grounding score]
+    AE -. planned Phase 2 .-> AH[Fusion layer]
+    AF -. planned Phase 2 .-> AH
+    AG -. planned Phase 2 .-> AH
+    AH -. planned Phase 2 .-> AI[Sentence-level risk score]
+    AI -. planned Phase 2 .-> AJ{Risk above threshold?}
+    AJ -. No: planned Phase 2 .-> AK[Keep sentence]
+    AJ -. Yes: planned Phase 2 .-> AL[Flag sentence with score and reason]
+    AL -. planned Phase 2 .-> AM[Evaluate precision, recall, F1]
+    AM -. planned Phase 3 .-> AN[Targeted re-retrieval]
+    AN -. planned Phase 3 .-> AO[Regenerate with evidence or abstain]
+    AO -. planned Phase 3 .-> AP[Final mitigated answer]
 ```
 
 ### Phase alignment
@@ -71,6 +81,35 @@ flowchart TD
 | Phase 3: targeted correction or abstention | Planned only; no sentence-level mitigation loop is wired into the query path. |
 
 The diagram deliberately does not present Phase 2 or Phase 3 as completed features.
+
+### Phase 2 workflow: “We Can Catch It”
+
+After the current Phase 1 RAG answer is generated, the planned Phase 2 detector
+will process each sentence independently:
+
+1. **Split the answer into sentences.**
+2. **Calculate entropy/confidence** to estimate how uncertain the generator was.
+3. **Calculate sampling consistency** by generating additional samples and checking
+   whether the same claim is repeated.
+4. **Calculate retrieval grounding** by comparing the sentence with the retrieved
+   source chunks.
+5. **Fuse the three signals** into one sentence-level hallucination risk score.
+6. **Apply a validation-set threshold** and flag sentences above it.
+7. **Report detector metrics** such as precision, recall, F1, and a confusion matrix.
+
+The Phase 2 demonstration is:
+
+```text
+User question
+  -> Phase 1 RAG answer
+  -> sentence-level signal calculation
+  -> fused risk score
+  -> risky sentence flagged with score and reason
+```
+
+This detector is a planned extension. The current repository does not yet
+calculate entropy, perform multi-sample consistency checking, compute a fused
+risk score, or expose live flagged sentences in `/api/ask`.
 
 ---
 
