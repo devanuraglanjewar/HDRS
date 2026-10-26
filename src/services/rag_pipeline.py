@@ -10,6 +10,7 @@ from src.core.llm import (
     embed_text,
     generate_with_gemini,
     generate_with_ollama,
+    is_ollama_available,
 )
 from src.core.prompts import rag_system_instruction
 from src.core.vector_store import VectorStoreManager
@@ -158,8 +159,16 @@ Query: {query}
 
 Answer:"""
 
-        gemini_model = "gemini-3.6-flash" if model_name == "auto" else model_name
-        max_retries = 5
+        use_ollama = is_ollama_available() and (model_name in ("auto", "ollama") or str(model_name).startswith("ollama:"))
+        if use_ollama:
+            ollama_model = OLLAMA_MODEL if model_name in ("auto", "ollama") else str(model_name).replace("ollama:", "")
+            try:
+                return self._sanitize_generated_answer(generate_with_ollama(full_prompt, system_instruction, ollama_model))
+            except Exception as ollama_err:
+                logger.warning("Generate: Ollama primary call failed, falling back to Gemini: %s", ollama_err)
+
+        gemini_model = "gemini-3.6-flash" if model_name in ("auto", "ollama") else model_name
+        max_retries = 3
         for attempt in range(max_retries):
             try:
                 return self._sanitize_generated_answer(generate_with_gemini(full_prompt, system_instruction, gemini_model))
@@ -167,16 +176,15 @@ Answer:"""
                 err_msg = str(error).lower()
                 is_rate_limit = any(x in err_msg for x in ["429", "quota", "resourceexhausted", "rate limit"])
                 
-                if is_rate_limit and OLLAMA_AVAILABLE:
+                if is_rate_limit and is_ollama_available():
                     logger.info("Generate: Gemini rate limited, falling back to Ollama")
-                    ollama_model = OLLAMA_MODEL if model_name in ("auto", "ollama") else model_name.replace("ollama:", "")
                     try:
-                        return self._sanitize_generated_answer(generate_with_ollama(full_prompt, system_instruction, ollama_model))
+                        return self._sanitize_generated_answer(generate_with_ollama(full_prompt, system_instruction, OLLAMA_MODEL))
                     except Exception as ollama_e:
                         logger.warning("Generate: Ollama fallback failed: %s", ollama_e)
                 
                 if is_rate_limit and attempt < max_retries - 1:
-                    time.sleep(2.0 + attempt)
+                    time.sleep(1.5 + attempt)
                 else:
                     return f"Error generating answer: {error}"
 
@@ -186,8 +194,10 @@ Answer:"""
         cleaned = re.sub(r"(?i)\baccording to the context passage from\s+[^\n,.!?]+(?:\s*\(chunk\s*\d+\))?,?\s*", "", answer)
         cleaned = re.sub(r"(?i)\bchunk\s*\d+\b", "", cleaned)
         cleaned = re.sub(r"(?i)\bHaluEval_Doc_\d+\b", "", cleaned)
-        cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
-        cleaned = re.sub(r"\s+([,.!?])", r"\1", cleaned)
+        # Collapse excessive horizontal spaces without destroying line breaks
+        cleaned = re.sub(r"[ \t]+", " ", cleaned)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        cleaned = re.sub(r" +([,.!?])", r"\1", cleaned).strip()
         return cleaned
 
     def ask(self, query: str, top_k: int = 3, model_name: str = "auto", source_filter: str = None) -> dict:

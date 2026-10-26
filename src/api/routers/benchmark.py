@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api", tags=["benchmark"])
 
 @router.post("/benchmark/generate_samples")
 def generate_samples(
-    num_samples: int = Form(12),
+    num_samples: int = Form(50),
     source_filter: str = Form(None),
 ):
     """
@@ -66,7 +66,7 @@ def get_benchmark_results():
             summary = json.load(f)
         with open(LABELED_DATA_FILE, "r", encoding="utf-8") as f:
             dataset = json.load(f)
-        return {"available": True, "summary": summary, "dataset": dataset[:15]}
+        return {"available": True, "summary": summary, "dataset": dataset}
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"Error reading benchmark results: {error}")
 

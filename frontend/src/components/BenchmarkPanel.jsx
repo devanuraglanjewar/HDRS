@@ -21,6 +21,13 @@ function BenchmarkPanel({ showToast, fetchStatus, benchmarkSource, onSelectSourc
   const [displaySentenceRate, setDisplaySentenceRate] = useState(0)
   const [displayAnswerRate, setDisplayAnswerRate] = useState(0)
   const pollIntervalRef = useRef(null)
+
+  // Case study filtering, searching, and pagination state
+  const [caseFilter, setCaseFilter] = useState('all') // 'all' | 'hallucinated' | 'grounded'
+  const [caseSearch, setCaseSearch] = useState('')
+  const [casePage, setCasePage] = useState(1)
+  const [pageSize, setPageSize] = useState(10) // 5, 10, 20, 50, or 'all'
+
   const activeSource = selectedSource || benchmarkSource || null
   const isSourceScoped = Boolean(activeSource && activeSource.trim())
   const benchmarkTitle = isSourceScoped ? 'Source Benchmark' : 'HaluEval Baseline Benchmark'
@@ -38,6 +45,57 @@ function BenchmarkPanel({ showToast, fetchStatus, benchmarkSource, onSelectSourc
       (results.summary.source_filter && results.summary.source_filter === activeSource.trim())
     )
   )
+
+  const caseCounts = useMemo(() => {
+    if (!results || !Array.isArray(results.dataset)) return { all: 0, hallucinated: 0, grounded: 0 }
+    const total = results.dataset.length
+    const hallucinated = results.dataset.filter(d => Boolean(d.has_hallucination)).length
+    return {
+      all: total,
+      hallucinated,
+      grounded: total - hallucinated
+    }
+  }, [results])
+
+  const filteredCases = useMemo(() => {
+    if (!results || !Array.isArray(results.dataset)) return []
+    let list = results.dataset
+
+    if (caseFilter === 'hallucinated') {
+      list = list.filter(item => Boolean(item.has_hallucination))
+    } else if (caseFilter === 'grounded') {
+      list = list.filter(item => !item.has_hallucination)
+    }
+
+    if (caseSearch.trim()) {
+      const q = caseSearch.toLowerCase().trim()
+      list = list.filter(
+        item =>
+          (item.question && item.question.toLowerCase().includes(q)) ||
+          (item.generated_answer && item.generated_answer.toLowerCase().includes(q)) ||
+          (item.reference_knowledge && item.reference_knowledge.toLowerCase().includes(q))
+      )
+    }
+
+    return list
+  }, [results, caseFilter, caseSearch])
+
+  const totalPages = useMemo(() => {
+    if (pageSize === 'all') return 1
+    const pSize = Number(pageSize) || 10
+    return Math.max(1, Math.ceil(filteredCases.length / pSize))
+  }, [filteredCases.length, pageSize])
+
+  const paginatedCases = useMemo(() => {
+    if (pageSize === 'all') return filteredCases
+    const pSize = Number(pageSize) || 10
+    const start = (casePage - 1) * pSize
+    return filteredCases.slice(start, start + pSize)
+  }, [filteredCases, casePage, pageSize])
+
+  useEffect(() => {
+    setCasePage(1)
+  }, [caseFilter, caseSearch, pageSize])
 
   const fetchDocuments = async () => {
     try {
@@ -104,7 +162,7 @@ function BenchmarkPanel({ showToast, fetchStatus, benchmarkSource, onSelectSourc
 
     try {
       const formData = new FormData()
-      formData.append('num_samples', Math.min(12, samples))
+      formData.append('num_samples', samples)
       if (activeSource) {
         formData.append('source_filter', activeSource)
       }
@@ -262,8 +320,8 @@ function BenchmarkPanel({ showToast, fetchStatus, benchmarkSource, onSelectSourc
                 <i className="fa-solid fa-eye"></i>
               </div>
               <div className="min-w-0">
-                <h3 className="text-base font-bold text-text-main">Preview generated QA samples</h3>
-                <p className="mt-1 text-sm leading-relaxed text-text-muted">Review the generated questions and short reference excerpts. Approve to start the full benchmark run.</p>
+                <h3 className="text-base font-bold text-text-main">Preview generated QA samples ({previewSamples.length} questions)</h3>
+                <p className="mt-1 text-sm leading-relaxed text-text-muted">Review all {previewSamples.length} generated questions and short reference excerpts. Approve to start the full benchmark run.</p>
               </div>
             </div>
 
@@ -318,7 +376,7 @@ function BenchmarkPanel({ showToast, fetchStatus, benchmarkSource, onSelectSourc
                 </p>
               </div>
             </div>
- 
+
             <div className="mt-6 flex items-center justify-end gap-3">
               <button
                 onClick={() => setDeleteConfirmOpen(false)}
@@ -460,11 +518,10 @@ function BenchmarkPanel({ showToast, fetchStatus, benchmarkSource, onSelectSourc
                     window.open(`/benchmark-report.html?${params.toString()}`, '_blank', 'noopener,noreferrer')
                   }}
                   title={`Open report for ${doc.source}`}
-                  className={`text-left rounded-2xl border p-4 min-w-0 transition-colors duration-150 ease-in-out ${
-                    isActive
+                  className={`text-left rounded-2xl border p-4 min-w-0 transition-colors duration-150 ease-in-out ${isActive
                       ? 'border-apple-blue bg-apple-blue/5 shadow-sm'
                       : 'border-border-light bg-white hover:shadow-sm hover:border-black/5'
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0 flex-1">
@@ -563,68 +620,264 @@ function BenchmarkPanel({ showToast, fetchStatus, benchmarkSource, onSelectSourc
           </div>
 
           <div className="lg:col-span-12 apple-panel p-5 sm:p-6">
-            <div className="border-b border-border-light pb-4 mb-5">
-              <h3 className="text-sm font-bold text-text-main flex items-center gap-2">
-                <i className="fa-solid fa-list-check text-apple-blue"></i> Benchmark Case Studies
-              </h3>
-              <p className="text-[10px] text-text-muted mt-0.5 font-medium">
-                Sentence-level evaluation - hover over highlighted text to see the judge's reasoning
-              </p>
+            <div className="border-b border-border-light pb-4 mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-text-main flex items-center gap-2">
+                  <i className="fa-solid fa-list-check text-apple-blue"></i> Benchmark Case Studies
+                  <span className="rounded-full bg-apple-blue/10 text-apple-blue px-2.5 py-0.5 text-xs font-bold">
+                    {filteredCases.length} {filteredCases.length === 1 ? 'case' : 'cases'}
+                  </span>
+                </h3>
+                <p className="text-[10px] text-text-muted mt-0.5 font-medium">
+                  Sentence-level evaluation — hover over highlighted sentences to view the judge's factual assessment
+                </p>
+              </div>
+
+              {/* Page size dropdown */}
+              <div className="flex items-center gap-2 self-start sm:self-auto">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted">Per page:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => setPageSize(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                  className="rounded-lg border border-border-light bg-surface-light px-2.5 py-1 text-xs font-semibold text-text-main outline-none focus:border-apple-blue cursor-pointer"
+                >
+                  <option value={5}>5</option>
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                  <option value="all">All ({filteredCases.length})</option>
+                </select>
+              </div>
             </div>
 
-            <div className="flex flex-col gap-5">
-              {results.dataset.slice(0, 3).map((ex, idx) => (
-                <div key={idx} className="border border-border-light rounded-xl overflow-hidden bg-base-light">
-                  <div className="bg-surface-light px-5 py-3.5 border-b border-border-light flex justify-between items-center">
-                    <div>
-                      <span className="text-[9px] text-apple-blue font-bold uppercase tracking-wider">Case Study #{idx + 1}</span>
-                      <h4 className="text-xs font-bold text-text-main mt-0.5">"{ex.question}"</h4>
-                    </div>
-                    <div className={`flex items-center gap-1.5 border px-3 py-1.5 rounded-full text-[10px] font-bold ${
-                      ex.has_hallucination
-                        ? 'text-apple-red border-apple-red/20 bg-apple-red/5'
-                        : 'text-apple-green border-apple-green/20 bg-apple-green/5'
-                    }`}>
-                      <i className={`fa-solid ${ex.has_hallucination ? 'fa-triangle-exclamation' : 'fa-circle-check'}`}></i>
-                      {ex.has_hallucination ? 'Hallucination Detected' : 'Fully Grounded'}
-                    </div>
-                  </div>
+            {/* Filter Pills & Search Bar */}
+            <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              {/* Filter Tabs */}
+              <div className="flex items-center gap-1.5 rounded-xl border border-border-light bg-base-light p-1">
+                <button
+                  onClick={() => setCaseFilter('all')}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-all ${
+                    caseFilter === 'all'
+                      ? 'bg-white text-text-main shadow-xs'
+                      : 'text-text-muted hover:text-text-main'
+                  }`}
+                >
+                  All ({caseCounts.all})
+                </button>
+                <button
+                  onClick={() => setCaseFilter('hallucinated')}
+                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-all ${
+                    caseFilter === 'hallucinated'
+                      ? 'bg-apple-red text-white shadow-xs'
+                      : 'text-apple-red hover:bg-apple-red/10'
+                  }`}
+                >
+                  <i className="fa-solid fa-triangle-exclamation text-[10px]"></i>
+                  Hallucinated ({caseCounts.hallucinated})
+                </button>
+                <button
+                  onClick={() => setCaseFilter('grounded')}
+                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-all ${
+                    caseFilter === 'grounded'
+                      ? 'bg-apple-green text-white shadow-xs'
+                      : 'text-apple-green hover:bg-apple-green/10'
+                  }`}
+                >
+                  <i className="fa-solid fa-circle-check text-[10px]"></i>
+                  Grounded ({caseCounts.grounded})
+                </button>
+              </div>
 
-                  <div className="p-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
-                    <div className="flex flex-col gap-2">
-                      <h5 className="text-[10px] font-bold text-text-muted uppercase tracking-wider">
-                        <i className="fa-solid fa-file-signature mr-1 text-apple-blue"></i> Source Reference
-                      </h5>
-                      <div className="bg-white border border-border-light p-4 rounded-xl text-xs leading-relaxed text-text-main h-44 overflow-y-auto">
-                        {ex.reference_knowledge}
-                      </div>
-                    </div>
+              {/* Search Box */}
+              <div className="relative min-w-[240px]">
+                <i className="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-xs text-text-muted"></i>
+                <input
+                  type="text"
+                  value={caseSearch}
+                  onChange={(e) => setCaseSearch(e.target.value)}
+                  placeholder="Search questions or answers..."
+                  className="w-full rounded-xl border border-border-light bg-surface-light py-1.5 pl-8 pr-8 text-xs font-medium text-text-main outline-none focus:border-apple-blue"
+                />
+                {caseSearch && (
+                  <button
+                    onClick={() => setCaseSearch('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-text-muted hover:text-text-main"
+                  >
+                    <i className="fa-solid fa-xmark"></i>
+                  </button>
+                )}
+              </div>
+            </div>
 
-                    <div className="flex flex-col gap-2">
-                      <h5 className="text-[10px] font-bold text-text-muted uppercase tracking-wider">
-                        <i className="fa-solid fa-comment-dots mr-1 text-apple-blue"></i> Generated Answer (Judged)
-                      </h5>
-                      <div className="bg-white border border-border-light p-4 rounded-xl text-xs leading-relaxed text-text-main h-44 overflow-y-auto">
-                        {ex.sentences.map((s, sIdx) => {
-                          const isHallucinated = s.label === 'hallucinated'
-                          return (
-                            <span key={sIdx} className={`judged-sentence ${isHallucinated ? 'hallucinated' : 'factual'}`}>
-                              {s.sentence}{' '}
-                              <span className="sentence-tooltip">
-                                <strong className={`${isHallucinated ? 'text-apple-red' : 'text-apple-green'} block font-bold mb-1`}>
-                                  {isHallucinated ? 'HALLUCINATION' : 'FACTUAL GROUNDING'}
-                                </strong>
-                                {s.reason}
-                              </span>
+            {/* Case Studies Cards List */}
+            {paginatedCases.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-border-light bg-base-light p-10 text-center">
+                <i className="fa-solid fa-filter-circle-xmark text-3xl text-text-muted mb-2 opacity-30"></i>
+                <div className="text-sm font-bold text-text-main">No matching case studies</div>
+                <p className="mt-1 text-xs text-text-muted">Try adjusting your search terms or filter selection.</p>
+                {(caseFilter !== 'all' || caseSearch) && (
+                  <button
+                    onClick={() => { setCaseFilter('all'); setCaseSearch(''); }}
+                    className="mt-3 rounded-lg border border-border-light bg-white px-3 py-1.5 text-xs font-bold text-apple-blue hover:bg-apple-blue/5"
+                  >
+                    Clear filters
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="flex flex-col gap-4">
+                {paginatedCases.map((ex, idx) => {
+                  const originalIndex = ex.sample_index != null ? ex.sample_index : (casePage - 1) * (pageSize === 'all' ? 0 : pageSize) + idx
+                  const sTotal = (ex.sentences || []).length
+                  const sHallu = (ex.sentences || []).filter(s => s.label === 'hallucinated').length
+                  const sFact = sTotal - sHallu
+
+                  return (
+                    <div key={idx} className="border border-border-light rounded-2xl overflow-hidden bg-base-light hover:border-black/10 transition-colors shadow-xs">
+                      {/* Card Header */}
+                      <div className="bg-surface-light px-5 py-3.5 border-b border-border-light flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-apple-blue font-bold uppercase tracking-wider">
+                              Case Study #{originalIndex + 1}
                             </span>
-                          )
-                        })}
+                            {ex.category && (
+                              <span className="rounded-md bg-border-light px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-text-muted">
+                                {ex.category}
+                              </span>
+                            )}
+                            {ex.latency != null && (
+                              <span className="text-[10px] text-text-muted font-medium">
+                                <i className="fa-regular fa-clock mr-1"></i>{typeof ex.latency === 'number' ? ex.latency.toFixed(2) : ex.latency}s
+                              </span>
+                            )}
+                          </div>
+                          <h4 className="text-sm font-bold text-text-main mt-1 leading-snug">
+                            "{ex.question}"
+                          </h4>
+                        </div>
+
+                        {/* Status Badge */}
+                        <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+                          <div className={`flex items-center gap-1.5 border px-3 py-1.5 rounded-full text-[10px] font-bold ${
+                            ex.has_hallucination
+                              ? 'text-apple-red border-apple-red/20 bg-apple-red/5'
+                              : 'text-apple-green border-apple-green/20 bg-apple-green/5'
+                          }`}>
+                            <i className={`fa-solid ${ex.has_hallucination ? 'fa-triangle-exclamation' : 'fa-circle-check'}`}></i>
+                            {ex.has_hallucination
+                              ? `Hallucination (${sHallu}/${sTotal} sentences)`
+                              : `Fully Grounded (${sFact} sentences)`
+                            }
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Card Body */}
+                      <div className="p-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
+                        {/* Reference Knowledge */}
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center justify-between">
+                            <h5 className="text-[10px] font-bold text-text-muted uppercase tracking-wider flex items-center gap-1.5">
+                              <i className="fa-solid fa-file-signature text-apple-blue"></i> Source Reference
+                            </h5>
+                            <span className="text-[9px] text-text-muted font-medium">
+                              {(ex.reference_knowledge || '').length} chars
+                            </span>
+                          </div>
+                          <div className="bg-white border border-border-light p-4 rounded-xl text-xs leading-relaxed text-text-main h-44 overflow-y-auto font-mono whitespace-pre-wrap select-text">
+                            {ex.reference_knowledge || 'No reference knowledge excerpt provided.'}
+                          </div>
+                        </div>
+
+                        {/* Generated Answer with Judged Sentences */}
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center justify-between">
+                            <h5 className="text-[10px] font-bold text-text-muted uppercase tracking-wider flex items-center gap-1.5">
+                              <i className="fa-solid fa-comment-dots text-apple-blue"></i> Generated Answer (Judged)
+                            </h5>
+                            <span className="text-[9px] text-text-muted font-medium">
+                              Judge: {ex.judge_method || 'ollama'}
+                            </span>
+                          </div>
+                          <div className="bg-white border border-border-light p-4 rounded-xl text-xs leading-relaxed text-text-main h-44 overflow-y-auto">
+                            {Array.isArray(ex.sentences) && ex.sentences.length > 0 ? (
+                              ex.sentences.map((s, sIdx) => {
+                                const isHallucinated = s.label === 'hallucinated'
+                                return (
+                                  <span key={sIdx} className={`judged-sentence ${isHallucinated ? 'hallucinated' : 'factual'}`}>
+                                    {s.sentence}{' '}
+                                    <span className="sentence-tooltip">
+                                      <strong className={`${isHallucinated ? 'text-apple-red' : 'text-apple-green'} block font-bold mb-1`}>
+                                        {isHallucinated ? 'HALLUCINATION' : 'FACTUAL GROUNDING'}
+                                      </strong>
+                                      {s.reason || (isHallucinated ? 'Claim not found in reference knowledge' : 'Directly supported by source text')}
+                                    </span>
+                                  </span>
+                                )
+                              })
+                            ) : (
+                              <span className="text-text-muted">{ex.generated_answer || 'No answer available.'}</span>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* Pagination Controls */}
+            {pageSize !== 'all' && totalPages > 1 && (
+              <div className="mt-6 border-t border-border-light pt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-xs text-text-muted font-medium">
+                  Showing <span className="font-bold text-text-main">{(casePage - 1) * pageSize + 1}</span> to{' '}
+                  <span className="font-bold text-text-main">{Math.min(casePage * pageSize, filteredCases.length)}</span> of{' '}
+                  <span className="font-bold text-text-main">{filteredCases.length}</span> case studies
                 </div>
-              ))}
-            </div>
+
+                <div className="flex items-center gap-1.5 self-center sm:self-auto">
+                  <button
+                    onClick={() => setCasePage(p => Math.max(1, p - 1))}
+                    disabled={casePage === 1}
+                    className="rounded-lg border border-border-light bg-white px-3 py-1.5 text-xs font-bold text-text-main disabled:opacity-40 disabled:cursor-not-allowed hover:bg-base-light transition-colors"
+                  >
+                    <i className="fa-solid fa-chevron-left mr-1"></i> Prev
+                  </button>
+
+                  {/* Page pills */}
+                  {Array.from({ length: totalPages }, (_, i) => i + 1)
+                    .filter(p => p === 1 || p === totalPages || Math.abs(p - casePage) <= 1)
+                    .map((p, pIdx, arr) => {
+                      const showEllipsisBefore = pIdx > 0 && p - arr[pIdx - 1] > 1
+                      return (
+                        <React.Fragment key={p}>
+                          {showEllipsisBefore && <span className="px-1 text-xs text-text-muted">...</span>}
+                          <button
+                            onClick={() => setCasePage(p)}
+                            className={`h-8 w-8 rounded-lg text-xs font-bold transition-all ${
+                              casePage === p
+                                ? 'bg-text-main text-white shadow-xs'
+                                : 'border border-border-light bg-white text-text-main hover:bg-base-light'
+                            }`}
+                          >
+                            {p}
+                          </button>
+                        </React.Fragment>
+                      )
+                    })}
+
+                  <button
+                    onClick={() => setCasePage(p => Math.min(totalPages, p + 1))}
+                    disabled={casePage === totalPages}
+                    className="rounded-lg border border-border-light bg-white px-3 py-1.5 text-xs font-bold text-text-main disabled:opacity-40 disabled:cursor-not-allowed hover:bg-base-light transition-colors"
+                  >
+                    Next <i className="fa-solid fa-chevron-right ml-1"></i>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       ) : results && activeSource && !resultsMatchSelectedScope ? (

@@ -44,7 +44,12 @@
     @apply min-h-screen overflow-x-hidden bg-base-light font-body text-text-main antialiased;
   }
 
-  h1, h2, h3, h4, h5, h6 {
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
     @apply font-heading font-semibold tracking-tight;
   }
 
@@ -62,7 +67,10 @@
 }
 
 .apple-panel {
-  @apply rounded-[1.75rem] border border-black/5 bg-white shadow-[0_14px_45px_rgba(17,17,26,0.05)];
+  border-radius: 1.75rem;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  background-color: #ffffff;
+  box-shadow: 0 14px 45px rgba(17, 17, 26, 0.05);
 }
 
 .hdrs-loader {
@@ -128,14 +136,37 @@
   mask-image: linear-gradient(to top, black calc(100% - 48px), transparent 100%);
 }
 
-.hdrs-loader__bar:nth-child(2) { transform: rotate(20deg); }
-.hdrs-loader__bar:nth-child(3) { transform: rotate(40deg); }
-.hdrs-loader__bar:nth-child(4) { transform: rotate(60deg); }
-.hdrs-loader__bar:nth-child(5) { transform: rotate(80deg); }
-.hdrs-loader__bar:nth-child(6) { transform: rotate(100deg); }
-.hdrs-loader__bar:nth-child(7) { transform: rotate(120deg); }
-.hdrs-loader__bar:nth-child(8) { transform: rotate(140deg); }
-.hdrs-loader__bar:nth-child(9) { transform: rotate(160deg); }
+.hdrs-loader__bar:nth-child(2) {
+  transform: rotate(20deg);
+}
+
+.hdrs-loader__bar:nth-child(3) {
+  transform: rotate(40deg);
+}
+
+.hdrs-loader__bar:nth-child(4) {
+  transform: rotate(60deg);
+}
+
+.hdrs-loader__bar:nth-child(5) {
+  transform: rotate(80deg);
+}
+
+.hdrs-loader__bar:nth-child(6) {
+  transform: rotate(100deg);
+}
+
+.hdrs-loader__bar:nth-child(7) {
+  transform: rotate(120deg);
+}
+
+.hdrs-loader__bar:nth-child(8) {
+  transform: rotate(140deg);
+}
+
+.hdrs-loader__bar:nth-child(9) {
+  transform: rotate(160deg);
+}
 
 .hdrs-loader__loaders-b {
   position: absolute;
@@ -167,34 +198,89 @@
   animation: hdrs-loader-move 3.63s ease-in-out infinite;
 }
 
-.hdrs-loader__rail:nth-child(2) { transform: rotate(20deg); }
-.hdrs-loader__rail:nth-child(3) { transform: rotate(40deg); }
-.hdrs-loader__rail:nth-child(4) { transform: rotate(60deg); }
-.hdrs-loader__rail:nth-child(5) { transform: rotate(80deg); }
-.hdrs-loader__rail:nth-child(6) { transform: rotate(100deg); }
-.hdrs-loader__rail:nth-child(7) { transform: rotate(120deg); }
-.hdrs-loader__rail:nth-child(8) { transform: rotate(140deg); }
-.hdrs-loader__rail:nth-child(9) { transform: rotate(160deg); }
+.hdrs-loader__rail:nth-child(2) {
+  transform: rotate(20deg);
+}
 
-.hdrs-loader__ball--1 { animation-delay: 0.2s; }
-.hdrs-loader__ball--2 { animation-delay: 0.4s; }
-.hdrs-loader__ball--3 { animation-delay: 0.6s; }
-.hdrs-loader__ball--4 { animation-delay: 0.8s; }
-.hdrs-loader__ball--5 { animation-delay: 1s; }
-.hdrs-loader__ball--6 { animation-delay: 1.2s; }
-.hdrs-loader__ball--7 { animation-delay: 1.4s; }
-.hdrs-loader__ball--8 { animation-delay: 1.6s; }
+.hdrs-loader__rail:nth-child(3) {
+  transform: rotate(40deg);
+}
+
+.hdrs-loader__rail:nth-child(4) {
+  transform: rotate(60deg);
+}
+
+.hdrs-loader__rail:nth-child(5) {
+  transform: rotate(80deg);
+}
+
+.hdrs-loader__rail:nth-child(6) {
+  transform: rotate(100deg);
+}
+
+.hdrs-loader__rail:nth-child(7) {
+  transform: rotate(120deg);
+}
+
+.hdrs-loader__rail:nth-child(8) {
+  transform: rotate(140deg);
+}
+
+.hdrs-loader__rail:nth-child(9) {
+  transform: rotate(160deg);
+}
+
+.hdrs-loader__ball--1 {
+  animation-delay: 0.2s;
+}
+
+.hdrs-loader__ball--2 {
+  animation-delay: 0.4s;
+}
+
+.hdrs-loader__ball--3 {
+  animation-delay: 0.6s;
+}
+
+.hdrs-loader__ball--4 {
+  animation-delay: 0.8s;
+}
+
+.hdrs-loader__ball--5 {
+  animation-delay: 1s;
+}
+
+.hdrs-loader__ball--6 {
+  animation-delay: 1.2s;
+}
+
+.hdrs-loader__ball--7 {
+  animation-delay: 1.4s;
+}
+
+.hdrs-loader__ball--8 {
+  animation-delay: 1.6s;
+}
 
 @keyframes hdrs-loader-move {
-  0% { transform: translateY(0); }
-  50% { transform: translateY(12em); }
-  100% { transform: translateY(0); }
+  0% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(12em);
+  }
+
+  100% {
+    transform: translateY(0);
+  }
 }
 
 @keyframes loading-overlay-bar {
   0% {
     transform: translateX(-100%);
   }
+
   100% {
     transform: translateX(100%);
   }

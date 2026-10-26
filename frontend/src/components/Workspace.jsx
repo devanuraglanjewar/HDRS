@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import axios from 'axios'
 import gsap from 'gsap'
+import ReactMarkdown from 'react-markdown'
 import { scrambleText } from './textFx'
 
 const DEMO_BENCHMARK = {
@@ -684,12 +685,33 @@ function Workspace({ showToast, fetchStatus, onOpenBenchmark, onOpenControl, onL
                         currentMessages.map((msg, idx) => (
                           <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                             <div
-                              className={`max-w-[82%] rounded-[1.4rem] px-4 py-3 text-[15px] leading-7 shadow-sm ${msg.role === 'user'
+                              className={`max-w-[85%] rounded-[1.4rem] px-5 py-3.5 text-[15px] leading-7 shadow-sm ${msg.role === 'user'
                                   ? 'bg-text-main text-white'
                                   : 'border border-black/5 bg-white text-text-main'
                                 }`}
                             >
-                              {msg.text}
+                              {msg.role === 'user' ? (
+                                <div className="whitespace-pre-wrap">{msg.text}</div>
+                              ) : (
+                                <div className="chat-markdown text-[15px] leading-relaxed">
+                                  <ReactMarkdown
+                                    components={{
+                                      p: ({ children }) => <p className="mb-3 last:mb-0 leading-7">{children}</p>,
+                                      ul: ({ children }) => <ul className="my-2 list-disc pl-5 space-y-1.5">{children}</ul>,
+                                      ol: ({ children }) => <ol className="my-2 list-decimal pl-5 space-y-1.5">{children}</ol>,
+                                      li: ({ children }) => <li className="leading-6">{children}</li>,
+                                      strong: ({ children }) => <strong className="font-semibold text-text-main">{children}</strong>,
+                                      code: ({ inline, children }) => inline ? (
+                                        <code className="rounded bg-black/5 px-1 py-0.5 text-xs font-mono">{children}</code>
+                                      ) : (
+                                        <pre className="my-2 overflow-x-auto rounded bg-black/5 p-2.5 text-xs font-mono">{children}</pre>
+                                      )
+                                    }}
+                                  >
+                                    {msg.text}
+                                  </ReactMarkdown>
+                                </div>
+                              )}
                             </div>
                           </div>
                         ))

@@ -18,6 +18,7 @@ from src.core.llm import (
     judge_with_ollama,
     generate_with_gemini,
     generate_with_ollama,
+    is_ollama_available,
 )
 from src.core.prompts import benchmark_generation_prompt, judge_prompt
 from src.services.rag_pipeline import RAGPipeline
@@ -105,7 +106,12 @@ def download_halueval_subset(num_samples: int = 50) -> list:
                     continue
     except Exception:
         samples = create_synthetic_data(num_samples)
-    return samples
+
+    if len(samples) < num_samples:
+        needed = num_samples - len(samples)
+        samples.extend(create_synthetic_data(needed))
+
+    return samples[:num_samples]
 
 
 def create_synthetic_data(num_samples: int) -> list:
@@ -145,10 +151,10 @@ def _generate_source_benchmark_samples(source_name: str, source_text: str, num_s
         return []
 
     prompt_text = cleaned_text[:MAX_SOURCE_PROMPT_CHARS]
-    requested_count = max(5, min(num_samples, 20))
+    requested_count = max(1, int(num_samples))
     prompt = benchmark_generation_prompt(source_name, prompt_text, requested_count)
 
-    def _fallback_source_samples() -> list:
+    def _fallback_source_samples(count: int, start_idx: int = 0) -> list:
         sentences = [s.strip() for s in re.split(r"(?<=[.?!])\s+", cleaned_text) if s.strip()]
         if not sentences:
             return []
@@ -159,13 +165,14 @@ def _generate_source_benchmark_samples(source_name: str, source_text: str, num_s
             "What information does the document provide about {snippet}?",
         ]
         samples = []
-        for i in range(requested_count):
-            sent = sentences[i % len(sentences)]
+        for i in range(count):
+            idx = start_idx + i
+            sent = sentences[idx % len(sentences)]
             snippet = " ".join(sent.split()[:10]).rstrip(".,;:")
             samples.append({
-                "question": templates[i % len(templates)].format(snippet=snippet),
+                "question": templates[idx % len(templates)].format(snippet=snippet),
                 "reference_knowledge": sent,
-                "category": "easy_factual" if i % 4 != 2 else "abstain",
+                "category": "easy_factual" if idx % 4 != 2 else "abstain",
                 "generation_method": "template_fallback",
             })
         return samples
@@ -192,6 +199,7 @@ def _generate_source_benchmark_samples(source_name: str, source_text: str, num_s
         except Exception:
             return {}
 
+    normalized = []
     try:
         # Prefer Ollama for local generation when available, otherwise use Gemini.
         if OLLAMA_AVAILABLE:
@@ -201,7 +209,6 @@ def _generate_source_benchmark_samples(source_name: str, source_text: str, num_s
 
         payload = _extract_json_from_text(raw)
         samples_raw = payload.get("samples", []) if isinstance(payload, dict) else []
-        normalized = []
         for item in samples_raw[:requested_count]:
             if not isinstance(item, dict):
                 continue
@@ -215,15 +222,17 @@ def _generate_source_benchmark_samples(source_name: str, source_text: str, num_s
                     "category": category,
                     "generation_method": "llm",
                 })
-        if normalized:
-            logger.debug("Source sample generation: used LLM generator for source '%s' (%d samples)", source_name, len(normalized))
-            return normalized
-        else:
-            logger.debug("Source sample generation: LLM returned no normalized samples, falling back for source '%s'", source_name)
-            return _fallback_source_samples()
     except Exception:
-        logger.debug("Source sample generation: exception using LLM, falling back for source '%s'", source_name, exc_info=True)
-        return _fallback_source_samples()
+        logger.debug("Source sample generation: exception using LLM, falling back to template generation for source '%s'", source_name, exc_info=True)
+
+    # If LLM generated fewer samples than requested (or failed), top up with template fallback to guarantee exact requested_count
+    if len(normalized) < requested_count:
+        needed = requested_count - len(normalized)
+        fallback_samples = _fallback_source_samples(count=needed, start_idx=len(normalized))
+        normalized.extend(fallback_samples)
+
+    logger.debug("Source sample generation: generated %d samples (requested %d) for source '%s'", len(normalized[:requested_count]), requested_count, source_name)
+    return normalized[:requested_count]
 
 
 def _build_judge_context(retrieved_context: str, reference_knowledge: str) -> tuple[str, str]:
@@ -261,6 +270,13 @@ def evaluate_sentence_level(context: str, answer: str, rate_limiter=None):
             "heuristic",
         )
 
+    # If Ollama is running locally, use it directly as judge for fast, quota-free evaluation
+    if is_ollama_available():
+        try:
+            return _parse_json_response(judge_with_ollama(prompt, OLLAMA_MODEL)), "ollama"
+        except Exception as ollama_e:
+            logger.warning("Judge: Ollama primary call failed: %s, falling back to Gemini", ollama_e)
+
     # Try Gemini with retries, falling back to Ollama if rate-limited.
     max_retries = 3
     for attempt in range(max_retries):
@@ -273,7 +289,7 @@ def evaluate_sentence_level(context: str, answer: str, rate_limiter=None):
             is_rate_limit = any(x in err_msg for x in ["429", "quota", "resourceexhausted", "rate limit"]) 
             logger.warning("Judge: Gemini attempt %d/%d failed: %s", attempt + 1, max_retries, error, exc_info=True)
             
-            if is_rate_limit and OLLAMA_AVAILABLE:
+            if is_rate_limit and is_ollama_available():
                 logger.info("Judge: Gemini rate limited, falling back to Ollama")
                 try:
                     return _parse_json_response(judge_with_ollama(prompt, OLLAMA_MODEL)), "ollama"

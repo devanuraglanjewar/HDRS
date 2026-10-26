@@ -32,14 +32,33 @@ def _run_with_timeout(func, timeout, *args, **kwargs):
             fut.cancel()
             raise TimeoutError(f"LLM call timed out after {timeout} seconds")
 
-try:
-    if ollama_client:
+_ollama_cache = {"val": False, "ts": 0.0}
+
+def is_ollama_available() -> bool:
+    now = time.time()
+    if now - _ollama_cache["ts"] < 4.0:
+        return _ollama_cache["val"]
+    if not ollama_client:
+        _ollama_cache["val"] = False
+        _ollama_cache["ts"] = now
+        return False
+    try:
         _models = ollama_client.list()
-        OLLAMA_AVAILABLE = any(m.model.startswith(OLLAMA_MODEL.split(":")[0]) for m in _models.models)
-    else:
-        OLLAMA_AVAILABLE = False
-except Exception:
-    OLLAMA_AVAILABLE = False
+        val = any(m.model.startswith(OLLAMA_MODEL.split(":")[0]) for m in _models.models)
+        _ollama_cache["val"] = val
+        _ollama_cache["ts"] = now
+        return val
+    except Exception:
+        _ollama_cache["val"] = False
+        _ollama_cache["ts"] = now
+        return False
+
+OLLAMA_AVAILABLE = is_ollama_available()
+
+def __getattr__(name: str):
+    if name == "OLLAMA_AVAILABLE":
+        return is_ollama_available()
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
 
 def get_retry_delay(error: Exception) -> float:
