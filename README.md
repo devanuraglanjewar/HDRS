@@ -239,9 +239,46 @@ That means prompt text, storage logic, and route handlers are separated instead 
 
 ## ⚙️ Configuration
 
+When the chat model is set to **Auto**, HDRS uses this resilient cascade for both
+answer generation and benchmark judging:
+
+`Gemini → managed Nemotron → local Ollama`
+
+Quota, rate-limit, timeout, authentication, and provider outage failures put that
+provider into a short cooldown (`PROVIDER_DEGRADATION_TTL`) so free-tier credits
+are not repeatedly wasted. The `/api/status` endpoint exposes configuration and
+cooldown state without returning secrets.
+
+### Supabase benchmark reports
+
+This repository uses FastAPI + React/Vite, so the Next.js SSR helpers are not
+needed. Run [supabase/benchmark_reports.sql](/Users/anuraglanjewar/Desktop/Directory/Projects/HDRS/supabase/benchmark_reports.sql)
+in the Supabase SQL Editor, then add these backend-only variables to `.env`:
+
+```env
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+```
+
+The schema includes `benchmark_reports`, `documents`, and `detector_metrics`.
+Completed benchmarks and extracted document text are uploaded to Supabase while
+embeddings remain in Chroma Cloud. Local `data/` files remain as an emergency
+fallback. To migrate existing local data after applying the schema, run:
+
+```bash
+./.venv/bin/python scripts/migrate_local_data_to_supabase.py
+```
+
+Do not use or expose the anon key for backend writes.
+
 | Variable | Default | Description |
 |---|---|---|
-| `GOOGLE_API_KEY` | — | Required for Gemini embeddings and fallback generation |
+| `GOOGLE_API_KEY` | — | Gemini embeddings and first-choice generation provider |
+| `NVIDIA_API_KEY` | — | Nemotron managed API key; OpenRouter-style `sk-or-` keys are auto-detected |
+| `NEMOTRON_BASE_URL` | auto | OpenAI-compatible Nemotron endpoint; defaults to OpenRouter for `sk-or-` keys, otherwise NVIDIA |
+| `NEMOTRON_GENERATE_MODEL` | `nvidia/nemotron-3.5-lightning:free` for OpenRouter keys | Managed Nemotron generation model |
+| `NEMOTRON_JUDGE_MODEL` | same as generation | Managed Nemotron benchmark judge model |
+| `PROVIDER_DEGRADATION_TTL` | `300` | Seconds to skip a provider after quota/outage/auth failure |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
 | `OLLAMA_MODEL` | `llama3.1:8b` | Local model name for generation and evaluation |
 

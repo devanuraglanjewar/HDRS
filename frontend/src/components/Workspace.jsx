@@ -43,6 +43,9 @@ function Workspace({ showToast, fetchStatus, onOpenBenchmark, onOpenControl, onL
   const heroTitleRef = useRef(null)
   const heroCopyRef = useRef(null)
   const heroBadgeRef = useRef(null)
+  const chatMessagesEndRef = useRef(null)
+  const [activeInspectorSentence, setActiveInspectorSentence] = useState(null)
+  const [showDetectionView, setShowDetectionView] = useState(true)
 
   useEffect(() => {
     const items = [heroBadgeRef.current, heroTitleRef.current, heroCopyRef.current].filter(Boolean)
@@ -213,6 +216,17 @@ function Workspace({ showToast, fetchStatus, onOpenBenchmark, onOpenControl, onL
   const activeDocName = selectedDoc?.source || 'workspace'
   const currentMessages = chatHistory[activeDocName] || []
 
+  // Auto-scroll chat to latest message (ChatGPT-style)
+  useEffect(() => {
+    if (isChatOpen) {
+      // Small timeout ensures DOM elements (e.g. Markdown, inspector widgets) have rendered their heights
+      const timer = setTimeout(() => {
+        chatMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+      }, 50)
+      return () => clearTimeout(timer)
+    }
+  }, [currentMessages, isChatLoading, isChatOpen])
+
   const openChatForDoc = (doc) => {
     setSelectedDoc(doc)
     setUploadMode(null)
@@ -278,6 +292,7 @@ function Workspace({ showToast, fetchStatus, onOpenBenchmark, onOpenControl, onL
       const assistantMsg = {
         role: 'assistant',
         text: res.data.answer,
+        detection: res.data.detection || null,
         timestamp: new Date().toLocaleTimeString()
       }
 
@@ -539,15 +554,14 @@ function Workspace({ showToast, fetchStatus, onOpenBenchmark, onOpenControl, onL
                   <div className="mt-3 space-y-2 text-sm">
                     <div className="flex items-center gap-2 text-text-main">
                       <span
-                        className={`h-2.5 w-2.5 rounded-full ${
-                          ingestStatus.status === 'running'
+                        className={`h-2.5 w-2.5 rounded-full ${ingestStatus.status === 'running'
                             ? 'bg-apple-blue animate-pulse'
                             : ingestStatus.status === 'completed'
                               ? 'bg-apple-green'
                               : ingestStatus.status === 'failed'
                                 ? 'bg-apple-red'
                                 : 'bg-black/20'
-                        }`}
+                          }`}
                       />
                       <span className="font-semibold capitalize">{ingestStatus.step || 'idle'}</span>
                     </div>
@@ -673,7 +687,7 @@ function Workspace({ showToast, fetchStatus, onOpenBenchmark, onOpenControl, onL
 
                 <div className="flex min-h-0 flex-1 flex-col px-4 py-4 sm:px-5">
                   <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-                    <div className="flex min-h-full flex-col justify-end gap-3 pb-2">
+                    <div className={`flex min-h-full flex-col gap-3 pb-2 ${currentMessages.length === 0 ? 'justify-center' : 'justify-start'}`}>
                       {currentMessages.length === 0 ? (
                         <div className="mx-auto w-full max-w-2xl rounded-[1.5rem] border border-dashed border-black/10 bg-white px-5 py-10 text-center">
                           <div className="text-sm font-medium text-text-main">Start the conversation</div>
@@ -686,30 +700,184 @@ function Workspace({ showToast, fetchStatus, onOpenBenchmark, onOpenControl, onL
                           <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                             <div
                               className={`max-w-[85%] rounded-[1.4rem] px-5 py-3.5 text-[15px] leading-7 shadow-sm ${msg.role === 'user'
-                                  ? 'bg-text-main text-white'
-                                  : 'border border-black/5 bg-white text-text-main'
+                                ? 'bg-text-main text-white'
+                                : 'border border-black/5 bg-white text-text-main'
                                 }`}
                             >
                               {msg.role === 'user' ? (
                                 <div className="whitespace-pre-wrap">{msg.text}</div>
                               ) : (
-                                <div className="chat-markdown text-[15px] leading-relaxed">
-                                  <ReactMarkdown
-                                    components={{
-                                      p: ({ children }) => <p className="mb-3 last:mb-0 leading-7">{children}</p>,
-                                      ul: ({ children }) => <ul className="my-2 list-disc pl-5 space-y-1.5">{children}</ul>,
-                                      ol: ({ children }) => <ol className="my-2 list-decimal pl-5 space-y-1.5">{children}</ol>,
-                                      li: ({ children }) => <li className="leading-6">{children}</li>,
-                                      strong: ({ children }) => <strong className="font-semibold text-text-main">{children}</strong>,
-                                      code: ({ inline, children }) => inline ? (
-                                        <code className="rounded bg-black/5 px-1 py-0.5 text-xs font-mono">{children}</code>
+                                <div className="space-y-3">
+                                  {/* Phase 2: Live Detection Banner & Sentence Inspector */}
+                                  {msg.detection?.sentences?.length > 0 ? (
+                                    <div>
+                                      {/* Mode Toggle Header */}
+                                      <div className="mb-2.5 flex items-center justify-between border-b border-black/5 pb-2">
+                                        <div className="flex items-center gap-1.5 text-xs font-semibold">
+                                          {msg.detection.has_hallucination ? (
+                                            <span className="flex items-center gap-1.5 rounded-full bg-apple-red/10 px-2.5 py-0.5 text-apple-red">
+                                              <i className="fa-solid fa-triangle-exclamation text-[11px]" />
+                                              {msg.detection.hallucinated_sentences_count} Hallucination Flagged
+                                            </span>
+                                          ) : (
+                                            <span className="flex items-center gap-1.5 rounded-full bg-apple-green/10 px-2.5 py-0.5 text-apple-green">
+                                              <i className="fa-solid fa-circle-check text-[11px]" />
+                                              All Claims Grounded
+                                            </span>
+                                          )}
+                                          <span className="text-[11px] text-text-muted font-normal">
+                                            (Risk: {(msg.detection.overall_risk * 100).toFixed(0)}%)
+                                          </span>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => setShowDetectionView(prev => !prev)}
+                                          className="text-[11px] font-medium text-apple-blue hover:underline cursor-pointer"
+                                        >
+                                          {showDetectionView ? 'Markdown text' : 'Inspect signals'}
+                                        </button>
+                                      </div>
+
+                                      {showDetectionView ? (
+                                        <div className="text-[15px] leading-relaxed">
+                                          {msg.detection.sentences.map((sent, sIdx) => {
+                                            const isSelected = activeInspectorSentence?.sentIndex === sIdx && activeInspectorSentence?.msgIndex === idx;
+                                            return (
+                                              <span
+                                                key={sIdx}
+                                                onClick={() => setActiveInspectorSentence(isSelected ? null : { sentIndex: sIdx, msgIndex: idx, sent })}
+                                                className={`detector-sentence ${sent.verdict} ${isSelected ? 'ring-2 ring-apple-blue' : ''}`}
+                                                title={`Click to inspect signals (${sent.verdict.toUpperCase()}: ${(sent.risk_score * 100).toFixed(0)}% risk)`}
+                                              >
+                                                {sent.text}{' '}
+                                              </span>
+                                            );
+                                          })}
+
+                                          {/* Sentence Signal Inspection Card */}
+                                          {activeInspectorSentence?.msgIndex === idx && activeInspectorSentence?.sent && (
+                                            <div className="mt-3.5 rounded-2xl border border-black/8 bg-[#fafafa] p-4 text-xs shadow-sm">
+                                              <div className="flex items-center justify-between border-b border-black/5 pb-2">
+                                                <div className="flex items-center gap-2">
+                                                  <span className={`rounded-md px-2 py-0.5 font-bold uppercase tracking-wider text-[10px] ${activeInspectorSentence.sent.verdict === 'hallucinated'
+                                                      ? 'bg-apple-red/15 text-apple-red'
+                                                      : activeInspectorSentence.sent.verdict === 'uncertain'
+                                                        ? 'bg-apple-yellow/20 text-apple-yellow'
+                                                        : 'bg-apple-green/15 text-apple-green'
+                                                    }`}>
+                                                    {activeInspectorSentence.sent.verdict}
+                                                  </span>
+                                                  <span className="font-semibold text-text-main">
+                                                    Fused Risk: {(activeInspectorSentence.sent.risk_score * 100).toFixed(1)}%
+                                                  </span>
+                                                </div>
+                                                <button
+                                                  onClick={() => setActiveInspectorSentence(null)}
+                                                  className="text-text-muted hover:text-text-main text-xs cursor-pointer"
+                                                >
+                                                  ✕
+                                                </button>
+                                              </div>
+
+                                              <p className="mt-2.5 font-medium text-text-main italic text-[13px] border-l-2 border-apple-blue pl-2">
+                                                "{activeInspectorSentence.sent.text}"
+                                              </p>
+
+                                              <div className="mt-3 grid gap-2">
+                                                <div>
+                                                  <div className="flex justify-between text-[11px] text-text-muted mb-0.5">
+                                                    <span>Signal 1: Token Entropy (Model Uncertainty)</span>
+                                                    <span className="font-semibold font-mono text-text-main">
+                                                      {activeInspectorSentence.sent.signals?.entropy}
+                                                    </span>
+                                                  </div>
+                                                  <div className="h-1.5 w-full rounded-full bg-black/5 overflow-hidden">
+                                                    <div
+                                                      className="h-full bg-apple-blue transition-all"
+                                                      style={{ width: `${Math.min(100, (activeInspectorSentence.sent.signals?.entropy || 0) * 100)}%` }}
+                                                    />
+                                                  </div>
+                                                </div>
+
+                                                <div>
+                                                  <div className="flex justify-between text-[11px] text-text-muted mb-0.5">
+                                                    <span>Signal 2: Sampling Inconsistency</span>
+                                                    <span className="font-semibold font-mono text-text-main">
+                                                      {activeInspectorSentence.sent.signals?.consistency_risk}
+                                                    </span>
+                                                  </div>
+                                                  <div className="h-1.5 w-full rounded-full bg-black/5 overflow-hidden">
+                                                    <div
+                                                      className="h-full bg-apple-yellow transition-all"
+                                                      style={{ width: `${Math.min(100, (activeInspectorSentence.sent.signals?.consistency_risk || 0) * 100)}%` }}
+                                                    />
+                                                  </div>
+                                                </div>
+
+                                                <div>
+                                                  <div className="flex justify-between text-[11px] text-text-muted mb-0.5">
+                                                    <span>Signal 3: Grounding Risk (Lack of Chunk Support)</span>
+                                                    <span className="font-semibold font-mono text-text-main">
+                                                      {activeInspectorSentence.sent.signals?.grounding_risk}
+                                                    </span>
+                                                  </div>
+                                                  <div className="h-1.5 w-full rounded-full bg-black/5 overflow-hidden">
+                                                    <div
+                                                      className="h-full bg-apple-red transition-all"
+                                                      style={{ width: `${Math.min(100, (activeInspectorSentence.sent.signals?.grounding_risk || 0) * 100)}%` }}
+                                                    />
+                                                  </div>
+                                                </div>
+                                              </div>
+
+                                              <div className="mt-3 rounded-lg bg-white border border-black/5 p-2 text-[11px] text-text-muted">
+                                                <span className="font-semibold text-text-main">Explanation: </span>
+                                                {activeInspectorSentence.sent.explanation}
+                                              </div>
+                                            </div>
+                                          )}
+                                        </div>
                                       ) : (
-                                        <pre className="my-2 overflow-x-auto rounded bg-black/5 p-2.5 text-xs font-mono">{children}</pre>
-                                      )
-                                    }}
-                                  >
-                                    {msg.text}
-                                  </ReactMarkdown>
+                                        <div className="chat-markdown text-[15px] leading-relaxed">
+                                          <ReactMarkdown
+                                            components={{
+                                              p: ({ children }) => <p className="mb-3 last:mb-0 leading-7">{children}</p>,
+                                              ul: ({ children }) => <ul className="my-2 list-disc pl-5 space-y-1.5">{children}</ul>,
+                                              ol: ({ children }) => <ol className="my-2 list-decimal pl-5 space-y-1.5">{children}</ol>,
+                                              li: ({ children }) => <li className="leading-6">{children}</li>,
+                                              strong: ({ children }) => <strong className="font-semibold text-text-main">{children}</strong>,
+                                              code: ({ inline, children }) => inline ? (
+                                                <code className="rounded bg-black/5 px-1 py-0.5 text-xs font-mono">{children}</code>
+                                              ) : (
+                                                <pre className="my-2 overflow-x-auto rounded bg-black/5 p-2.5 text-xs font-mono">{children}</pre>
+                                              )
+                                            }}
+                                          >
+                                            {msg.text}
+                                          </ReactMarkdown>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div className="chat-markdown text-[15px] leading-relaxed">
+                                      <ReactMarkdown
+                                        components={{
+                                          p: ({ children }) => <p className="mb-3 last:mb-0 leading-7">{children}</p>,
+                                          ul: ({ children }) => <ul className="my-2 list-disc pl-5 space-y-1.5">{children}</ul>,
+                                          ol: ({ children }) => <ol className="my-2 list-decimal pl-5 space-y-1.5">{children}</ol>,
+                                          li: ({ children }) => <li className="leading-6">{children}</li>,
+                                          strong: ({ children }) => <strong className="font-semibold text-text-main">{children}</strong>,
+                                          code: ({ inline, children }) => inline ? (
+                                            <code className="rounded bg-black/5 px-1 py-0.5 text-xs font-mono">{children}</code>
+                                          ) : (
+                                            <pre className="my-2 overflow-x-auto rounded bg-black/5 p-2.5 text-xs font-mono">{children}</pre>
+                                          )
+                                        }}
+                                      >
+                                        {msg.text}
+                                      </ReactMarkdown>
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -728,6 +896,7 @@ function Workspace({ showToast, fetchStatus, onOpenBenchmark, onOpenControl, onL
                           </div>
                         </div>
                       )}
+                      <div ref={chatMessagesEndRef} />
                     </div>
                   </div>
 

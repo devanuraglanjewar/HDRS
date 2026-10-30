@@ -5,6 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, Form, HTTPException, Query
 from fastapi.responses import Response
 
 from src.services.benchmark_service import LABELED_DATA_FILE, RESULTS_FILE, STATUS_FILE, get_status, run_benchmark, download_halueval_subset, _generate_source_benchmark_samples, _load_source_text
+from src.services.supabase_store import supabase_report_store
 
 router = APIRouter(prefix="/api", tags=["benchmark"])
 
@@ -59,6 +60,14 @@ def get_benchmark_status():
 @router.get("/benchmark/results")
 def get_benchmark_results():
     if not os.path.exists(RESULTS_FILE) or not os.path.exists(LABELED_DATA_FILE):
+        cloud_report = supabase_report_store.latest()
+        if cloud_report:
+            return {
+                "available": True,
+                "summary": cloud_report.get("summary", {}),
+                "dataset": cloud_report.get("dataset", []),
+                "storage": "supabase",
+            }
         return {"available": False, "message": "No benchmark results found. Please run the benchmark first."}
 
     try:
@@ -66,7 +75,7 @@ def get_benchmark_results():
             summary = json.load(f)
         with open(LABELED_DATA_FILE, "r", encoding="utf-8") as f:
             dataset = json.load(f)
-        return {"available": True, "summary": summary, "dataset": dataset}
+        return {"available": True, "summary": summary, "dataset": dataset, "storage": "local+supabase" if supabase_report_store.configured else "local"}
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"Error reading benchmark results: {error}")
 
@@ -111,6 +120,8 @@ def download_benchmark_report(source_filter: str = Query(None)):
 @router.delete("/benchmark/report")
 def delete_benchmark_report(source_filter: str = Query(None)):
     if not os.path.exists(RESULTS_FILE) or not os.path.exists(LABELED_DATA_FILE):
+        if supabase_report_store.delete_latest((source_filter or "").strip() or None):
+            return {"status": "deleted", "message": "Benchmark report deleted from Supabase."}
         raise HTTPException(status_code=404, detail="No benchmark report found. Please run the benchmark first.")
 
     try:
@@ -133,6 +144,8 @@ def delete_benchmark_report(source_filter: str = Query(None)):
         for path in (RESULTS_FILE, LABELED_DATA_FILE, STATUS_FILE):
             if os.path.exists(path):
                 os.remove(path)
+
+        supabase_report_store.delete_latest(selected_source)
 
         return {
             "status": "deleted",

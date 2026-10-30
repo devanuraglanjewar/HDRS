@@ -290,3 +290,40 @@
   width: 45%;
   animation: loading-overlay-bar 1.15s ease-in-out infinite;
 }
+
+/* Phase 2: Live Sentence Detector Styles */
+.detector-sentence {
+  transition: all 0.15s ease-in-out;
+  cursor: pointer;
+  border-radius: 0.35rem;
+  padding: 0.1rem 0.25rem;
+  margin: 0 0.1rem;
+  display: inline;
+}
+
+.detector-sentence.factual {
+  background-color: rgba(52, 199, 89, 0.08);
+  border-bottom: 2px solid rgba(52, 199, 89, 0.4);
+}
+.detector-sentence.factual:hover {
+  background-color: rgba(52, 199, 89, 0.18);
+  border-bottom-color: #34c759;
+}
+
+.detector-sentence.uncertain {
+  background-color: rgba(255, 159, 10, 0.10);
+  border-bottom: 2px solid rgba(255, 159, 10, 0.5);
+}
+.detector-sentence.uncertain:hover {
+  background-color: rgba(255, 159, 10, 0.22);
+  border-bottom-color: #ff9f0a;
+}
+
+.detector-sentence.hallucinated {
+  background-color: rgba(255, 59, 48, 0.12);
+  border-bottom: 2px solid #ff3b30;
+  color: #c92a2a;
+}
+.detector-sentence.hallucinated:hover {
+  background-color: rgba(255, 59, 48, 0.22);
+}

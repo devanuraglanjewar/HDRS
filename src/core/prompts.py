@@ -1,43 +1,42 @@
-def rag_system_instruction() -> str:
+def rag_system_instruction(source_name: str = None) -> str:
+    source_clause = f" for the document '{source_name}'" if source_name else ""
     return (
-        "You are a strict Retrieval-Augmented Generation (RAG) assistant.\n"
-        "Your task is to answer the user's query based ONLY on the provided context passages.\n"
-        "Follow these rules precisely:\n"
-        "1. Answer using ONLY facts directly mentioned in the context. Do not use external knowledge.\n"
-        "2. If the context does not contain enough information to answer the query, state exactly: "
-        "'I do not know based on the provided sources.' Do not guess or extrapolate.\n"
-        "3. Do not make up facts, names, numbers, or dates under any circumstances.\n"
-        "4. Do not mention internal document IDs, chunk numbers, retrieval labels, source names, or dataset names.\n"
-        "5. Do not say phrases like 'according to the context passage' or 'based on Chunk X'."
+        f"You are a factual, source-grounded Retrieval-Augmented Generation (RAG) assistant{source_clause}.\n"
+        "Your task is to answer the user's questions clearly, accurately, and naturally based on the provided context passages.\n"
+        "Guidelines:\n"
+        "1. Base your answer on facts directly stated in the provided context passages and document header.\n"
+        "2. When the user asks about the title, study name, authors, or proposed solution, extract them from the context passages or document title.\n"
+        "3. Only say 'I do not know based on the provided sources.' if the provided context truly lacks any relevant information to answer the question.\n"
+        "4. Do not fabricate facts, external citations, or claims not present in the context.\n"
+        "5. Speak naturally; avoid robotic expressions like 'According to chunk 3' or 'based on internal passage'."
     )
 
 
 def benchmark_generation_prompt(source_name: str, prompt_text: str, requested_count: int) -> str:
-    return f"""You are generating a source-grounded benchmark from a single document.
-Create exactly {requested_count} question-answer samples based only on the document content below.
+    """Compact benchmark prompt — asks for questions and categories ONLY.
+    Omitting 'reference_knowledge' from the output cuts response tokens by ~60%,
+    making generation 2-3x faster. The caller derives reference sentences locally via keyword overlap.
+    """
+    return f"""Generate exactly {requested_count} diverse benchmark questions from the document excerpt below.
 
-Requirements:
-- Questions must be answerable from the document text itself.
-- Mix in a few questions that should trigger a correct abstention ("I do not know based on the provided sources.").
-- Do not reference chunk numbers, internal document IDs, or any dataset labels.
-- Keep questions concise and varied.
-- Return valid JSON only.
+Rules:
+- Every question must be answerable from the document text.
+- Include 1 abstention question per 5 (ask about something NOT in the document — hardware costs, legal requirements, external vendor pricing, etc.).
+- Keep each question under 25 words.
+- No chunk references, IDs, or dataset labels.
+- Return only valid JSON.
 
-Document name: {source_name}
-Document text:
+Document: {source_name}
+---
 {prompt_text}
+---
 
-Return JSON in this exact shape:
+Output format (no explanation, no markdown):
 {{
   "samples": [
-    {{
-      "question": "string",
-      "reference_knowledge": "short excerpt or paraphrase from the document that supports the question",
-      "category": "easy_factual | precise_extraction | abstain | near_miss"
-    }}
+    {{"question": "...", "category": "easy_factual | precise_extraction | abstain | near_miss"}}
   ]
-}}
-"""
+}}"""
 
 
 def judge_prompt(knowledge: str, answer: str) -> str:

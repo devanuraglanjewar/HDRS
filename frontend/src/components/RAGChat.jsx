@@ -6,7 +6,7 @@ function RAGChat({ showToast, setLoadingOverlay }) {
   const [messages, setMessages] = useState([])
   const [retrievedChunks, setRetrievedChunks] = useState([])
   const [topK, setTopK] = useState(3)
-  const [modelName, setModelName] = useState('gemini-3.6-flash')
+  const [modelName, setModelName] = useState('auto')
   const [isLoading, setIsLoading] = useState(false)
   const [expandedChunk, setExpandedChunk] = useState(null)
 
@@ -14,8 +14,11 @@ function RAGChat({ showToast, setLoadingOverlay }) {
 
   // Auto scroll chat
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    const timer = setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }, 50)
+    return () => clearTimeout(timer)
+  }, [messages, isLoading])
 
   const handleSendMessage = async () => {
     const queryText = query.trim()
@@ -76,8 +79,11 @@ function RAGChat({ showToast, setLoadingOverlay }) {
               onChange={(e) => setModelName(e.target.value)}
               className="bg-black/30 border border-border-dark rounded-lg text-xs text-text-main p-2 outline-none focus:border-primary-neon cursor-pointer"
             >
-              <option value="gemini-3.6-flash">Gemini 3.6 Flash (Default)</option>
+              <option value="auto">Auto: Gemini → Nemotron → Ollama</option>
+              <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
               <option value="gemini-2.5-pro">Gemini 2.5 Pro (Reasoning)</option>
+              <option value="nemotron">Nemotron (managed cloud)</option>
+              <option value="ollama">Ollama (local)</option>
             </select>
           </div>
 
@@ -135,7 +141,17 @@ function RAGChat({ showToast, setLoadingOverlay }) {
           )}
 
           {isLoading && (
-            <div />
+            <div className="flex gap-4 max-w-[80%] self-start">
+              <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm shrink-0 border shadow-lg bg-surface-dark text-primary-neon border-border-dark">
+                <i className="fa-solid fa-robot"></i>
+              </div>
+              <div className="p-4 rounded-2xl shadow-md bg-surface-dark border border-border-dark text-text-muted rounded-tl-none flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-primary-neon animate-pulse"></span>
+                <span className="w-2 h-2 rounded-full bg-primary-neon animate-pulse [animation-delay:150ms]"></span>
+                <span className="w-2 h-2 rounded-full bg-primary-neon animate-pulse [animation-delay:300ms]"></span>
+                <span className="text-xs ml-1 font-medium">Generating answer...</span>
+              </div>
+            </div>
           )}
           <div ref={messagesEndRef} />
         </div>

@@ -8,12 +8,12 @@ from src.core.llm import (
     OLLAMA_AVAILABLE,
     OLLAMA_MODEL,
     embed_text,
-    generate_with_gemini,
-    generate_with_ollama,
     is_ollama_available,
+    call_with_fallback,
 )
 from src.core.prompts import rag_system_instruction
 from src.core.vector_store import VectorStoreManager
+from src.services.detector import DetectorService
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,9 @@ class RAGPipeline:
     def __init__(self, persist_dir="data/chroma_db", collection_name="rag_documents", force_local=False):
         self.chunker = SemanticChunker()
         self.vector_store = VectorStoreManager(persist_dir=persist_dir, collection_name=collection_name, force_local=force_local)
+        self.detector = DetectorService()
+        self.last_provider = "unknown"
+        self.last_model = "unknown"
 
     def get_embedding(self, text: str) -> list:
         return embed_text(text)
@@ -95,7 +98,31 @@ class RAGPipeline:
         # ask the underlying store for candidates (allow store to apply its own top_k heuristics)
         results = self.vector_store.query(query_embedding, top_k=top_k, source_filter=source_filter)
         if not results:
-            return []
+            results = []
+
+        # If query targets document metadata (title, name, authors, who, solution, overview),
+        # ensure Chunk 0 (which contains Title, Authors, Abstract) is included in candidates.
+        if source_filter:
+            meta_keywords = {"name", "study", "author", "authors", "who", "title", "solution", "about", "summary", "overview", "paper"}
+            query_words = set(re.findall(r"\b\w+\b", query.lower()))
+            if query_words.intersection(meta_keywords):
+                has_chunk_0 = any(c.get("metadata", {}).get("chunk_index") == 0 for c in results)
+                if not has_chunk_0:
+                    try:
+                        all_source_docs = self.vector_store.get_by_source(source_filter)
+                        if all_source_docs and all_source_docs.get("documents"):
+                            docs = all_source_docs["documents"]
+                            metas = all_source_docs.get("metadatas", [])
+                            for idx, m in enumerate(metas):
+                                if m and m.get("chunk_index") == 0:
+                                    results.insert(0, {
+                                        "text": docs[idx],
+                                        "metadata": m,
+                                        "score": 1.0,
+                                    })
+                                    break
+                    except Exception as e:
+                        logger.debug("Failed to fetch chunk 0 for meta query: %s", e)
 
         # ensure results are sorted by score descending
         try:
@@ -146,47 +173,35 @@ class RAGPipeline:
         logger.debug("retrieve(query=%s, top_k=%d, source_filter=%s) -> %d unique chunks (requested %d)", query if len(query) < 200 else query[:200] + "...", top_k, source_filter, len(unique), top_k)
         return unique
 
-    def generate(self, query: str, retrieved_chunks: list, model_name: str = "auto") -> str:
+    def generate(self, query: str, retrieved_chunks: list, model_name: str = "auto", source_name: str = None) -> str:
         if not retrieved_chunks:
             return "No relevant context found to answer the query."
 
         context_str = "\n\n".join(chunk["text"] for chunk in retrieved_chunks)
-        system_instruction = rag_system_instruction()
-        full_prompt = f"""Context Passages:
+        system_instruction = rag_system_instruction(source_name)
+        source_header = f"Active Document Name: {source_name}\n\n" if source_name else ""
+        full_prompt = f"""{source_header}Context Passages from Document:
 {context_str}
 
-Query: {query}
+User Question: {query}
 
 Answer:"""
 
-        use_ollama = is_ollama_available() and (model_name in ("auto", "ollama") or str(model_name).startswith("ollama:"))
-        if use_ollama:
-            ollama_model = OLLAMA_MODEL if model_name in ("auto", "ollama") else str(model_name).replace("ollama:", "")
-            try:
-                return self._sanitize_generated_answer(generate_with_ollama(full_prompt, system_instruction, ollama_model))
-            except Exception as ollama_err:
-                logger.warning("Generate: Ollama primary call failed, falling back to Gemini: %s", ollama_err)
-
-        gemini_model = "gemini-3.6-flash" if model_name in ("auto", "ollama") else model_name
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                return self._sanitize_generated_answer(generate_with_gemini(full_prompt, system_instruction, gemini_model))
-            except Exception as error:
-                err_msg = str(error).lower()
-                is_rate_limit = any(x in err_msg for x in ["429", "quota", "resourceexhausted", "rate limit"])
-                
-                if is_rate_limit and is_ollama_available():
-                    logger.info("Generate: Gemini rate limited, falling back to Ollama")
-                    try:
-                        return self._sanitize_generated_answer(generate_with_ollama(full_prompt, system_instruction, OLLAMA_MODEL))
-                    except Exception as ollama_e:
-                        logger.warning("Generate: Ollama fallback failed: %s", ollama_e)
-                
-                if is_rate_limit and attempt < max_retries - 1:
-                    time.sleep(1.5 + attempt)
-                else:
-                    return f"Error generating answer: {error}"
+        try:
+            answer, provider, resolved_model = call_with_fallback(
+                full_prompt,
+                system_instruction,
+                model_name=model_name,
+            )
+            self.last_provider = provider
+            self.last_model = resolved_model
+            logger.info("Generation completed with provider=%s model=%s", provider, resolved_model)
+            return self._sanitize_generated_answer(answer)
+        except Exception as error:
+            self.last_provider = "unavailable"
+            self.last_model = "unknown"
+            logger.error("All generation providers failed: %s", error)
+            return f"Error generating answer: {error}"
 
     def _sanitize_generated_answer(self, answer: str) -> str:
         if not answer:
@@ -200,14 +215,24 @@ Answer:"""
         cleaned = re.sub(r" +([,.!?])", r"\1", cleaned).strip()
         return cleaned
 
-    def ask(self, query: str, top_k: int = 3, model_name: str = "auto", source_filter: str = None) -> dict:
+    def ask(self, query: str, top_k: int = 4, model_name: str = "auto", source_filter: str = None) -> dict:
         chunks = self.retrieve(query, top_k, source_filter)
-        answer = self.generate(query, chunks, model_name)
+        answer = self.generate(query, chunks, model_name=model_name, source_name=source_filter)
         retrieved_context = "\n\n".join(chunk["text"] for chunk in chunks)
+        
+        # Phase 2: Live sentence-level multi-signal detection
+        detection = self.detector.analyze_answer(
+            query=query,
+            answer=answer,
+            retrieved_chunks=chunks,
+        )
+
         return {
             "query": query,
             "answer": answer,
             "retrieved_chunks": chunks,
             "retrieved_context": retrieved_context,
-            "model_used": OLLAMA_MODEL if (model_name == "auto" and OLLAMA_AVAILABLE) else ("gemini-3.6-flash" if model_name == "auto" else model_name),
+            "model_used": self.last_model if self.last_model != "unknown" else model_name,
+            "provider_used": self.last_provider,
+            "detection": detection,
         }
