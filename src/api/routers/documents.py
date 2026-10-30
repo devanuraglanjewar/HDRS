@@ -4,6 +4,7 @@ import os
 from fastapi import APIRouter, HTTPException, Request
 
 from src.services.benchmark_service import reset_benchmark_artifacts
+from src.services.supabase_store import supabase_report_store
 
 router = APIRouter(prefix="/api", tags=["documents"])
 
@@ -12,6 +13,18 @@ router = APIRouter(prefix="/api", tags=["documents"])
 def get_all_documents(request: Request):
     pipeline = request.app.state.pipeline
     try:
+        cloud_documents = supabase_report_store.list_documents()
+        if cloud_documents:
+            return [
+                {
+                    "source": row.get("source_name", "Unknown Document"),
+                    "chunks_count": row.get("chunks_count", 0),
+                    "full_text": row.get("full_text", ""),
+                    "chunks": [],
+                    "storage": "supabase+chroma_cloud",
+                }
+                for row in cloud_documents
+            ]
         data = pipeline.vector_store.get_all()
         if not data or not data.get("documents"):
             return []
@@ -40,6 +53,7 @@ def get_all_documents(request: Request):
                 "chunks_count": len(chunks),
                 "full_text": reconstructed_text,
                 "chunks": chunks,
+                "storage": "chroma_cloud_or_local",
             })
         return result
     except Exception as error:
@@ -51,6 +65,7 @@ def clear_database(request: Request):
     pipeline = request.app.state.pipeline
     try:
         pipeline.vector_store.clear()
+        supabase_report_store.clear_documents()
         reset_benchmark_artifacts()
         return {
             "status": "success",
@@ -68,6 +83,7 @@ def delete_document_source(request: Request, source_name: str):
         raise HTTPException(status_code=400, detail="Source name cannot be empty.")
     try:
         deleted_count = pipeline.vector_store.delete_by_source(source_name)
+        supabase_report_store.delete_document(source_name)
         if deleted_count == 0:
             raise HTTPException(status_code=404, detail="Source not found.")
         remaining_count = pipeline.vector_store.get_count()

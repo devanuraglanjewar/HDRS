@@ -75,8 +75,25 @@ class TestBenchmarkSampleGeneration(unittest.TestCase):
             self.assertEqual(len(data), count)
 
     def test_api_generate_samples_respects_num_samples(self):
-        """Verify the /api/benchmark/generate_samples endpoint returns the exact requested sample count."""
-        with patch("src.api.routers.benchmark._load_source_text", return_value=SAMPLE_DOC_TEXT):
+        """Verify the /api/benchmark/generate_samples endpoint returns the exact requested sample count.
+
+        LLM calls are mocked so this test runs offline without touching the Gemini API.
+        """
+        # Build a minimal valid LLM response JSON that the benchmark service can parse
+        def _mock_llm_response(*args, **kwargs):
+            # Return just 3 samples — the service must top up to the requested count
+            return """{
+                "samples": [
+                    {"question": "What is RAG?", "reference_knowledge": "RAG is an AI framework", "category": "easy_factual"},
+                    {"question": "What is hallucination?", "reference_knowledge": "Hallucination detection identifies errors", "category": "easy_factual"},
+                    {"question": "What does fusion do?", "reference_knowledge": "Fusion combines multiple signals", "category": "precise_extraction"}
+                ]
+            }"""
+
+        with patch("src.api.routers.benchmark._load_source_text", return_value=SAMPLE_DOC_TEXT), \
+             patch("src.services.benchmark_service.generate_with_gemini", side_effect=_mock_llm_response), \
+             patch("src.services.benchmark_service.generate_with_ollama", side_effect=_mock_llm_response), \
+             patch("src.services.benchmark_service.OLLAMA_AVAILABLE", False):
             for count in [10, 20, 50]:
                 response = self.client.post(
                     "/api/benchmark/generate_samples",

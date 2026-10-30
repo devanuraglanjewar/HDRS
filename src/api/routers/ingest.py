@@ -5,6 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Request, Up
 from pypdf import PdfReader
 
 from src.api.schemas import TextIngestRequest
+from src.services.supabase_store import supabase_report_store
 
 router = APIRouter(prefix="/api", tags=["ingest"])
 
@@ -27,6 +28,9 @@ def _finalize_text_ingest(request: Request, text_content: str, source_name: str)
             _set_ingest_status(request, "running", progress, step, message)
 
         chunks_added = pipeline.ingest_text(text_content, source_name, progress_callback=progress_callback)
+        # Persist extracted text/metadata in Supabase; Chroma Cloud remains the
+        # source of truth for embeddings and retrieval chunks.
+        supabase_report_store.save_document(source_name, text_content, chunks_added)
         _set_ingest_status(request, "completed", 100, "done", f"Ingested {chunks_added} chunk(s) from {source_name}.")
     except Exception as error:
         _set_ingest_status(request, "failed", 100, "failed", str(error))

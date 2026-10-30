@@ -10,13 +10,14 @@ from src.api.routers.chat import router as chat_router
 from src.api.routers.documents import router as documents_router
 from src.api.routers.ingest import router as ingest_router
 from src.api.routers.status import router as status_router
+from src.api.routers.detection import router as detection_router
 from src.core.settings import DEV_SERVER_URL
 from src.services.benchmark_service import reset_benchmark_artifacts
 from src.services.rag_pipeline import RAGPipeline
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Multi-Signal Hallucination Detector (Phase 1)")
+    app = FastAPI(title="Multi-Signal Hallucination Detector (Phase 1 & Phase 2)")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -34,6 +35,7 @@ def create_app() -> FastAPI:
     app.include_router(chat_router)
     app.include_router(documents_router)
     app.include_router(benchmark_router)
+    app.include_router(detection_router)
 
     if DEV_SERVER_URL:
         @app.get("/")

@@ -14,6 +14,8 @@ def query_rag(request: Request, payload: QueryRequest):
             "query": res["query"],
             "answer": res["answer"],
             "model_used": res.get("model_used", "unknown"),
+            "provider_used": res.get("provider_used", "unknown"),
+            "detection": res.get("detection", {}),
             "retrieved_chunks": [
                 {
                     "text": chunk["text"],

@@ -270,3 +270,19 @@ class VectorStoreManager:
         if self.hybrid_mode and self.cloud_store and self.local_store:
             return self.cloud_store.delete_by_source(source_name) + self.local_store.delete_by_source(source_name)
         return self.store.delete_by_source(source_name)
+
+    def get_by_source(self, source_name: str) -> dict:
+        if self.hybrid_mode or self.use_fallback or not hasattr(self.store, "collection"):
+            all_docs = self.get_all() or {}
+            docs = all_docs.get("documents", [])
+            metas = all_docs.get("metadatas", [])
+            filtered_docs, filtered_metas = [], []
+            for idx, m in enumerate(metas):
+                if m and m.get("source") == source_name:
+                    filtered_docs.append(docs[idx])
+                    filtered_metas.append(m)
+            return {"documents": filtered_docs, "metadatas": filtered_metas}
+        try:
+            return self.store.collection.get(where={"source": source_name})
+        except Exception:
+            return self.get_all() or {}

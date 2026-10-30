@@ -1,3 +1,4 @@
+from typing import Optional, List
 from pydantic import BaseModel
 
 
@@ -11,3 +12,9 @@ class QueryRequest(BaseModel):
 class TextIngestRequest(BaseModel):
     text: str
     source_name: str
+
+
+class SentenceAnalyzeRequest(BaseModel):
+    sentence: str
+    context: Optional[str] = ""
+    retrieved_chunks: Optional[List[str]] = None
